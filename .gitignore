@@ -1,0 +1,24 @@
+# project code
+InvenTree/
+
+# Environment files
+.env
+.env.bak
+.env.template
+
+# Local data volumes and backups
+inventree-volume/
+inventree-dump/
+
+# Docker image cache
+docker-images/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+
