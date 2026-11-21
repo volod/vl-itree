@@ -1,0 +1,13 @@
+# Overlay for INVENTREE_TLS_MODE=owner. run-itree.sh adds this file after
+# docker-compose.yml when the owner supplies a certificate and key.
+#
+# The files are mounted read-only from absolute paths outside the repository.
+# No SELinux relabel option is set, so the owner's files keep their labels;
+# on SELinux hosts give them a label the container can read (for example
+# "chcon -t container_file_t <file>").
+
+services:
+    inventree-proxy:
+        volumes:
+            - ${INVENTREE_TLS_CERT_FILE:?owner TLS mode needs INVENTREE_TLS_CERT_FILE}:/etc/caddy/tls/cert.pem:ro
+            - ${INVENTREE_TLS_KEY_FILE:?owner TLS mode needs INVENTREE_TLS_KEY_FILE}:/etc/caddy/tls/key.pem:ro

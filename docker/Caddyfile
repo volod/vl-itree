@@ -1,0 +1,151 @@
+# vl-itree: begin
+# Vendored from the official InvenTree repository:
+#   https://github.com/inventree/InvenTree/blob/1.7.3/contrib/container/Caddyfile
+#   tag 1.7.3, upstream sha256 df6ca810f79b328ad47f451035450fbac261e5b0298c7e1b06b2027f316b2544
+#
+# Local changes are wrapped in "vl-itree: begin" / "vl-itree: end" markers.
+# Removing every marked block (markers included) yields the upstream file
+# byte for byte; tests/test-launcher.sh checks this.
+#
+# Local changes:
+#   1. Global options: Caddy listens on the same port numbers that are
+#      published on the host, so the site address in INVENTREE_SITE_URL
+#      (for example https://inventree.lan:8443) matches the listener and
+#      HTTP->HTTPS redirects carry the right port.
+#   2. TLS snippets, selected by INVENTREE_PROXY_TLS (set by run-itree.sh):
+#        none     - plain HTTP site (loopback only, enforced by the launcher)
+#        internal - certificate from Caddy's internal CA ("tls internal")
+#        owner    - owner-supplied certificate and key, mounted read-only
+#   3. HTTP->HTTPS redirect. Caddy's automatic redirect assumes the
+#      configured https_port is reachable as 443 and drops the port, so it is
+#      disabled and replaced by an explicit redirect that keeps
+#      INVENTREE_HTTPS_PORT (https modes only; the HTTP port is loopback-only).
+# All environment variables are provided by docker/docker-compose.yml.
+{
+	http_port {$INVENTREE_HTTP_PORT}
+	https_port {$INVENTREE_HTTPS_PORT}
+	# The internal CA root lives in /data; do not try to add it to the
+	# container's own trust store.
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+(vl_itree_tls_none) {
+}
+
+(vl_itree_tls_internal) {
+	tls internal
+}
+
+(vl_itree_tls_owner) {
+	tls /etc/caddy/tls/cert.pem /etc/caddy/tls/key.pem
+}
+
+(vl_itree_redirect_none) {
+}
+
+(vl_itree_redirect_internal) {
+	http://:{$INVENTREE_HTTP_PORT} {
+		redir https://{host}:{$INVENTREE_HTTPS_PORT}{uri} 308
+	}
+}
+
+(vl_itree_redirect_owner) {
+	import vl_itree_redirect_internal
+}
+
+import vl_itree_redirect_{$INVENTREE_PROXY_TLS}
+# vl-itree: end
+# Example Caddyfile for InvenTree
+# The following environment variables may be used:
+# - INVENTREE_SITE_URL: The upstream URL of the InvenTree site (default: inventree.localhost)
+# - INVENTREE_SERVER: The internal URL of the InvenTree container (default: http://inventree-server:8000)
+# - INVENTREE_WEB_PORT: The port on which the InvenTree web server listens (default: 8000)
+#
+# Note that while this file is a good starting point, it may need to be modified to suit your specific requirements
+#
+# Ref to the Caddyfile documentation: https://caddyserver.com/docs/caddyfile
+
+
+# Logging configuration for Caddy
+(log_common) {
+	log {
+		output file /var/log/caddy/{args[0]}.access.log
+	}
+}
+
+# CORS headers control (used for static and media files)
+(cors-headers) {
+	header Allow GET,HEAD,OPTIONS
+	header Access-Control-Allow-Origin *
+	header Access-Control-Allow-Methods GET,HEAD,OPTIONS
+	header Access-Control-Allow-Headers Authorization,Content-Type,User-Agent,traceparent
+
+	@cors_preflight{args[0]} method OPTIONS
+
+	handle @cors_preflight{args[0]} {
+		respond "" 204
+	}
+}
+
+# Internal-only health check endpoint, on port 9090
+# This only serves to check that the Caddy container is running correctly
+:9090 {
+	handle /api/system/health/* {
+		reverse_proxy {$INVENTREE_SERVER:"http://inventree-server:8000"}
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# The default server address is configured in the .env file
+# If not specified, the proxy listens for all http/https traffic
+# If you need to listen on multiple addresses, or use a different port, you can modify this section directly
+{$INVENTREE_SITE_URL:"http://, https://"} {
+	import log_common inventree
+	# vl-itree: begin
+	import vl_itree_tls_{$INVENTREE_PROXY_TLS}
+	# vl-itree: end
+
+	encode gzip
+
+	request_body {
+		max_size 100MB
+	}
+
+	# Handle static request files
+	handle_path /static/* {
+		import cors-headers static
+
+		root * /var/www/static
+		file_server
+	}
+
+	# Handle media request files
+	handle_path /media/* {
+		import cors-headers media
+
+		root * /var/www/media
+		file_server
+
+		# Force download of media files (for security)
+		# Comment out this line if you do not want to force download
+		header Content-Disposition attachment
+
+		# Authentication is handled by the forward_auth directive
+		# This is required to ensure that media files are only accessible to authenticated users
+		forward_auth {$INVENTREE_SERVER:"http://inventree-server:8000"} {
+			uri /auth/
+		}
+	}
+
+	# All other requests are proxied to the InvenTree server
+	reverse_proxy {$INVENTREE_SERVER:"http://inventree-server:8000"} {
+
+		# If you are running behind another proxy, you may need to specify 'trusted_proxies'
+		# Ref: https://caddyserver.com/docs/json/apps/http/servers/trusted_proxies/
+		# trusted_proxies ...
+	}
+}
